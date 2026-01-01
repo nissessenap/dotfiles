@@ -349,6 +349,217 @@ The state file enables:
 - Resume after human intervention
 - Tracking progress across sessions
 
+## Alternative Approaches
+
+### Option 1: Ralph-loop + Sub-agents (Documented Above)
+
+**How it works**: Ralph-loop keeps a thin orchestrator running. The orchestrator delegates all implementation and review work to sub-agents with isolated contexts.
+
+| Aspect | Details |
+|--------|---------|
+| Context Isolation | Per sub-agent (fresh each spawn) |
+| Automation | Stop hook prevents exit until complete |
+| Complexity | Medium - requires orchestrator command |
+| Best For | Your current workflow with minimal changes |
+
+---
+
+### Option 2: CLI Headless Mode (`claude -p`)
+
+**How it works**: Each phase runs as a completely separate `claude -p` invocation. A shell script orchestrates the phases.
+
+```bash
+#!/bin/bash
+# orchestrate.sh - Each invocation gets fresh context automatically
+
+PLAN="$1"
+
+# Phase 1
+claude -p "Implement Phase 1 from $PLAN" \
+  --allowedTools "Read,Edit,Write,Bash" \
+  --output-format json > phase1_result.json
+
+# Run tests directly
+make test || { echo "Tests failed"; exit 1; }
+
+# Phase 2 (completely fresh context)
+claude -p "Implement Phase 2 from $PLAN" \
+  --allowedTools "Read,Edit,Write,Bash" \
+  --output-format json > phase2_result.json
+
+# ... continue for all phases
+```
+
+| Aspect | Details |
+|--------|---------|
+| Context Isolation | Guaranteed (each `claude -p` is fresh) |
+| Automation | Shell script controls flow |
+| Complexity | Low - just bash scripting |
+| Best For | CI/CD integration, simple workflows |
+
+**Limitations**:
+
+- Slash commands (`/research_codebase`) not available in `-p` mode
+- No interactive prompts possible
+- Less sophisticated error recovery
+
+**Source**: [Claude Code Headless Mode](https://docs.anthropic.com/en/docs/claude-code/core-features/headless-mode)
+
+---
+
+### Option 3: Git Worktrees + Parallel Sessions
+
+**How it works**: Each phase runs in a separate git worktree with its own Claude session. Complete filesystem and context isolation.
+
+```bash
+#!/bin/bash
+# Create worktrees for parallel work
+git worktree add ../project-phase1 -b phase1
+git worktree add ../project-phase2 -b phase2
+
+# Run phases in parallel (if independent)
+(cd ../project-phase1 && claude -p "Implement Phase 1") &
+(cd ../project-phase2 && claude -p "Implement Phase 2") &
+wait
+
+# Merge results
+git merge phase1 phase2
+```
+
+| Aspect | Details |
+|--------|---------|
+| Context Isolation | Complete (filesystem-level separation) |
+| Automation | Shell script with git |
+| Complexity | Medium - requires git worktree knowledge |
+| Best For | Large refactors, truly parallel phases |
+
+**Limitations**:
+
+- Requires careful merge conflict handling
+- More disk space (multiple working directories)
+- Overkill for sequential phases
+
+**Source**: [Running Claude Code in Parallel with Git Worktrees](https://dev.to/datadeer/part-2-running-multiple-claude-code-sessions-in-parallel-with-git-worktree-165i)
+
+---
+
+### Option 4: Claude Agent SDK (Python/TypeScript)
+
+**How it works**: Build a custom orchestrator using the Agent SDK. Full programmatic control over agent behavior.
+
+```python
+from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
+
+async def orchestrate_plan(plan_path: str):
+    for phase in parse_phases(plan_path):
+        # Each query() call can use subagents with isolated context
+        result = await query(
+            prompt=f"Implement Phase {phase.number} from {plan_path}",
+            options=ClaudeAgentOptions(
+                allowed_tools=["Read", "Edit", "Write", "Bash", "Task"],
+                agents={
+                    "implementer": AgentDefinition(
+                        description="Implements plan phases",
+                        tools=["Read", "Edit", "Write", "Bash"]
+                    ),
+                    "reviewer": AgentDefinition(
+                        description="Reviews code changes",
+                        tools=["Read", "Grep", "Bash"]
+                    )
+                }
+            )
+        )
+
+        # Run verification
+        if not run_tests():
+            # Retry logic here
+            pass
+
+        # Commit
+        commit_phase(phase)
+```
+
+| Aspect | Details |
+|--------|---------|
+| Context Isolation | Per subagent + per query() call |
+| Automation | Full programmatic control |
+| Complexity | High - requires SDK development |
+| Best For | Production systems, complex workflows |
+
+**Limitations**:
+
+- Requires Python/TypeScript development
+- More complex setup
+- Overkill for personal workflow automation
+
+**Source**: [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python)
+
+---
+
+### Option 5: MCP Workflow Server
+
+**How it works**: Define workflows declaratively in YAML. An MCP server orchestrates execution.
+
+```yaml
+# workflows/implement-plan.yaml
+name: implement-plan
+steps:
+  - name: implement
+    agent: senior-software-engineer
+    tools: [Read, Edit, Write, Bash]
+
+  - name: test
+    command: make test
+
+  - name: review
+    agent: code-reviewer
+    tools: [Read, Grep, Bash]
+
+  - name: commit
+    command: git commit -am "Phase complete"
+```
+
+| Aspect | Details |
+|--------|---------|
+| Context Isolation | Depends on workflow design |
+| Automation | Declarative YAML workflows |
+| Complexity | Medium - requires MCP setup |
+| Best For | Reusable workflow libraries |
+
+**Source**: [Workflows MCP Server](https://github.com/cyanheads/workflows-mcp-server)
+
+---
+
+## Comparison Matrix
+
+| Approach | Context Isolation | Setup Complexity | Fits Current Workflow | Parallel Phases |
+|----------|------------------|------------------|----------------------|-----------------|
+| Ralph-loop + Sub-agents | Per sub-agent | Medium | Excellent | Yes |
+| CLI `-p` mode | Per invocation | Low | Good (no slash commands) | Yes |
+| Git Worktrees | Complete | Medium | Good | Excellent |
+| Agent SDK | Per subagent/query | High | Requires rewrite | Yes |
+| MCP Workflows | Design-dependent | Medium | Moderate | Design-dependent |
+
+## Recommendation
+
+For your specific workflow (research → plan → implement with phases):
+
+**Primary: Ralph-loop + Sub-agents** (Option 1)
+
+- Keeps your existing commands (`/implement_plan`, `/code-reviewe`)
+- Sub-agents provide context isolation
+- State file enables resume
+- Self-healing with retry limits
+
+**Alternative: CLI `-p` + Shell Script** (Option 2)
+
+- Simpler to implement
+- Guaranteed fresh context per phase
+- But: loses slash commands and interactive features
+- Good for: running overnight with no human interaction expected
+
+**For parallel phases specifically**: Consider Git Worktrees (Option 3) for truly independent work.
+
 ## Open Questions
 
 1. **Test command detection**: How to determine project-specific test/lint commands?
