@@ -285,11 +285,13 @@ The plan file is the source of truth. Sub-agents mark checkboxes as they complet
    - [x] Linting passes: `make lint`         ← sub-agent ran this
    - [ ] E2E tests pass: `make e2e`          ← sub-agent skipped (slow)
    ```
-3. Orchestrator reads the plan after sub-agent returns
-4. Orchestrator only runs UNCHECKED items (e.g., `make e2e`)
-5. If unchecked items pass, orchestrator marks them checked
+
+1. Orchestrator reads the plan after sub-agent returns
+2. Orchestrator only runs UNCHECKED items (e.g., `make e2e`)
+3. If unchecked items pass, orchestrator marks them checked
 
 **Benefits:**
+
 - No duplicate test runs (especially important for slow e2e tests)
 - Sub-agent has discretion to skip slow tests if not strictly needed
 - Plan file shows exactly what was verified and by whom
@@ -750,9 +752,14 @@ For your specific workflow (research → plan → implement with phases):
 
 2. **Commit granularity**: One commit per phase or squash on completion?
    - Current design: per-phase commits (enables bisecting)
-   - Could add `--squash` flag to setup_orchestrate for squash preference
 
 3. **Manual verification steps**: How to handle phases with manual verification?
    - Current plans have "Manual Verification" sections
    - Could skip those and note them in exit output
    - Could prompt for human confirmation (adds complexity)
+
+## Answers
+
+1. don't parallelizable for starters
+2. one commit per phase
+3. skip them for now.
