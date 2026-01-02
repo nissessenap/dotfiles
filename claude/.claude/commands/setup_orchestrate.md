@@ -45,9 +45,13 @@ Create `.claude/orchestrator-state.json`:
   "max_retries": <max_retries>,
   "completed_phases": [],
   "commits": [],
-  "last_error": null
+  "last_error": null,
+  "current_agents": [],
+  "last_review": null
 }
 ```
+
+Note: `current_agents` tracks which specialized agents are being used for the current phase (e.g., `["golang-pro", "sql-expert"]`). `last_review` stores the review results for the responding step.
 
 ### 5. Calculate Max Iterations
 

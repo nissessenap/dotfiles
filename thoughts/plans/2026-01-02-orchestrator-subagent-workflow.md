@@ -452,8 +452,8 @@ pending → implementing → verifying → reviewing → [commit] → pending (n
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] File exists: `claude/.claude/commands/orchestrate_plan.md`
-- [ ] File has valid YAML frontmatter with description
+- [x] File exists: `claude/.claude/commands/orchestrate_plan.md`
+- [x] File has valid YAML frontmatter with description
 
 #### Manual Verification:
 - [ ] Running `/orchestrate_plan` without state file exits cleanly
