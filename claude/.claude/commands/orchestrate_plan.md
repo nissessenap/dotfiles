@@ -1,0 +1,232 @@
+---
+description: Execute plan phases with sub-agents (called by ralph-loop)
+model: opus
+---
+
+# Orchestrate Plan Implementation
+
+Thin orchestrator that executes plan phases using sub-agents for context isolation.
+Called repeatedly by ralph-loop until it outputs `ORCHESTRATION_STOPPED`.
+
+## Workflow
+
+### 1. Read State
+Read `.claude/orchestrator-state.json` to determine current status.
+
+If state file doesn't exist:
+```
+<promise>ORCHESTRATION_STOPPED</promise>
+
+No orchestration state found.
+
+Run /setup_orchestrate <plan-path> first to initialize.
+```
+
+### 2. Read Plan
+Read the plan document from `state.plan_path`.
+
+### 3. Determine Action
+
+Based on `state.phase_status`:
+
+- **"pending"**: Start implementing current phase
+- **"implementing"**: Check if implementation succeeded, run verification
+- **"verifying"**: Run remaining verification, then code review
+- **"reviewing"**: Check review results, commit or retry
+- **"fixing"**: Check fix results, re-verify
+
+### 4. Execute Current Phase
+
+#### 4.1 Implementation (phase_status: "pending")
+
+Update state to `"implementing"`, then spawn sub-agent:
+
+```
+Use Task tool with:
+- subagent_type: "senior-software-engineer"
+- prompt: |
+    You are implementing Phase {N} of a plan.
+
+    Plan path: {plan_path}
+    Phase: {N} of {total}
+
+    Instructions:
+    1. Read the plan document completely
+    2. Find the section for Phase {N}
+    3. Implement ONLY what's described in that phase
+    4. If the phase has an "Automated Verification" section with checkboxes:
+       - Run those verification commands
+       - Mark checkboxes [x] in the plan file for tests you run successfully
+       - Leave unchecked if you skip a test
+    5. Do not proceed to other phases
+    6. When done, summarize what you implemented
+
+    Return format:
+    - SUCCESS: {summary of changes}
+    - FAILURE: {what went wrong}
+```
+
+After sub-agent returns:
+- If SUCCESS: Update state to `"verifying"`
+- If FAILURE: Increment retry_count, spawn fix agent or escalate
+
+#### 4.2 Verification (phase_status: "verifying")
+
+Read the plan and check for unchecked verification items in current phase.
+
+If unchecked items exist:
+- Run each unchecked command
+- Mark checkbox if passes
+- If any fail: increment retry_count, update last_error, spawn fix agent or escalate
+
+If all checked or no verification section:
+- Update state to `"reviewing"`
+
+#### 4.3 Code Review (phase_status: "reviewing")
+
+Spawn review sub-agent:
+
+```
+Use Task tool with:
+- subagent_type: "code-reviewe"
+- prompt: |
+    Review the code changes for Phase {N}.
+
+    Run: git diff HEAD~1 (or git diff if not committed)
+
+    Focus ONLY on blockers (Level 1):
+    - Security vulnerabilities
+    - Critical logic bugs
+    - Missing tests for new logic
+    - Breaking API changes
+
+    Ignore style suggestions and minor improvements.
+
+    Return format:
+    - APPROVED: {brief summary}
+    - BLOCKERS: {list of blocking issues}
+```
+
+After review:
+- If APPROVED: Commit and advance phase
+- If BLOCKERS and retry_count <= max_retries: spawn fix agent
+- If BLOCKERS and retry_count > max_retries: EXIT blocked
+
+#### 4.4 Commit and Advance
+
+```bash
+git add -A && git commit -m "Phase {N}: {phase_description}"
+```
+
+Update state:
+- Add to completed_phases
+- Add commit info to commits array
+- Increment current_phase
+- Reset retry_count to 0
+- Set phase_status to "pending"
+
+If current_phase > total_phases: EXIT success
+
+#### 4.5 Fix Attempts (phase_status: "fixing")
+
+Spawn fix sub-agent:
+
+```
+Use Task tool with:
+- subagent_type: "senior-software-engineer"
+- prompt: |
+    You are fixing issues found in Phase {N}.
+
+    Plan path: {plan_path}
+    Issues to fix:
+    {last_error or review blockers}
+
+    Instructions:
+    1. Read the relevant files
+    2. Fix ONLY the listed issues
+    3. Do not refactor or improve other code
+    4. Run failing verification commands after fixing
+    5. Mark checkboxes [x] for now-passing verifications
+
+    Return format:
+    - FIXED: {summary of fixes}
+    - UNABLE: {what couldn't be fixed and why}
+```
+
+After fix:
+- If FIXED: Update state to "verifying"
+- If UNABLE: EXIT blocked
+
+### 5. Exit Conditions
+
+Always exit with `<promise>ORCHESTRATION_STOPPED</promise>` followed by context.
+
+#### Success Exit
+
+```
+<promise>ORCHESTRATION_STOPPED</promise>
+
+All phases complete!
+
+Completed phases:
+1. Phase 1: {description} (commit: abc123)
+2. Phase 2: {description} (commit: def456)
+...
+
+Ready for you to push and create PR.
+```
+
+#### Blocked Exit
+
+```
+<promise>ORCHESTRATION_STOPPED</promise>
+
+Phase {N} blocked after {max_retries} attempts.
+
+Last error:
+{error details}
+
+Attempted fixes:
+1. {first attempt summary}
+2. {second attempt summary}
+3. {third attempt summary}
+
+To resume after fixing: /setup_orchestrate {path} --start-phase {N}
+```
+
+#### Needs Input Exit
+
+```
+<promise>ORCHESTRATION_STOPPED</promise>
+
+Phase {N} needs your input.
+
+Question: {what's unclear}
+
+Options:
+1. {option 1}
+2. {option 2}
+
+After deciding, update the plan and run:
+/setup_orchestrate {path} --start-phase {N}
+```
+
+## State Machine
+
+```
+pending -> implementing -> verifying -> reviewing -> [commit] -> pending (next phase)
+                |              |           |
+              fixing <-<-<-<-<-<-<-<-<-<-<-<
+                |
+        (if retries exhausted)
+                |
+            STOPPED
+```
+
+## Important Notes
+
+- Each ralph-loop iteration = one state transition
+- Sub-agents get fresh context (no accumulated confusion)
+- State file is the source of truth for progress
+- Checkboxes in plan track what verification was run
+- Always update state BEFORE spawning sub-agents
