@@ -12,6 +12,16 @@ Prepares orchestration for an implementation plan and outputs the ralph-loop com
 - `plan_path` (required): Path to the implementation plan
 - `--max-retries N`: Max fix attempts per phase (default: 3)
 - `--start-phase N`: Start from specific phase (default: 1, or resume from state)
+- `--context "..."`: Optional guidance for all sub-agents (stored in state, passed to every agent)
+
+### Context Examples
+```
+--context "Greenfield project - breaking changes are encouraged to keep code maintainable"
+--context "Legacy codebase - be conservative, avoid breaking existing APIs"
+--context "Performance critical - optimize for speed over readability"
+--context "Prototype phase - skip tests, focus on functionality"
+--context "Production system - full test coverage required, no shortcuts"
+```
 
 ## Workflow
 
@@ -47,11 +57,15 @@ Create `.claude/orchestrator-state.json`:
   "commits": [],
   "last_error": null,
   "current_agents": [],
-  "last_review": null
+  "last_review": null,
+  "context": "<optional user-provided guidance>"
 }
 ```
 
-Note: `current_agents` tracks which specialized agents are being used for the current phase (e.g., `["golang-pro", "sql-expert"]`). `last_review` stores the review results for the responding step.
+Field notes:
+- `current_agents`: Tracks which specialized agents are working on current phase (e.g., `["golang-pro", "sql-expert"]`)
+- `last_review`: Stores review results for the responding step
+- `context`: User-provided guidance passed to all sub-agents (null if not provided)
 
 ### 5. Calculate Max Iterations
 

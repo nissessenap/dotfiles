@@ -39,6 +39,9 @@ Run /setup_orchestrate <plan-path> first to initialize.
 ### 2. Read Plan
 Read the plan document from `state.plan_path`.
 
+### 2.5 Check for Context
+If `state.context` is set, include it in ALL sub-agent prompts as a "Project Context" section. This guidance affects how agents approach the implementation.
+
 ### 3. Determine Action
 
 Based on `state.phase_status`:
@@ -73,6 +76,11 @@ Use Task tool with:
 
     Plan path: {plan_path}
     Phase: {N} of {total}
+
+    {IF state.context is set}
+    ## Project Context
+    {state.context}
+    {END IF}
 
     Instructions:
     1. Read the plan document completely
@@ -122,6 +130,11 @@ Use Task tool with:
 - subagent_type: "code-reviewe"
 - prompt: |
     Review the code changes for Phase {N}.
+
+    {IF state.context is set}
+    ## Project Context
+    {state.context}
+    {END IF}
 
     Run: git diff HEAD~1 (or git diff if not committed)
 
@@ -173,6 +186,11 @@ Use Task tool with:
 - subagent_type: {same agent(s) that implemented the phase}
 - prompt: |
     A code review was performed on your Phase {N} implementation.
+
+    {IF state.context is set}
+    ## Project Context
+    {state.context}
+    {END IF}
 
     Review findings:
     {review results from previous step}
@@ -238,6 +256,12 @@ Use Task tool with:
     You are fixing issues found in Phase {N}.
 
     Plan path: {plan_path}
+
+    {IF state.context is set}
+    ## Project Context
+    {state.context}
+    {END IF}
+
     Issues to fix:
     {last_error or unresolved review blockers}
 
@@ -333,3 +357,4 @@ pending -> implementing -> verifying -> reviewing -> responding -> [commit] -> p
 - Use the same specialized agent(s) for implementation, response, and fixing
 - Multi-agent parallel execution is encouraged for cross-domain phases
 - Implementer can disagree with reviewer - requires clear technical justification
+- If `state.context` is set, include it in every sub-agent prompt - it guides how agents approach the work (e.g., "greenfield project, breaking changes OK")
