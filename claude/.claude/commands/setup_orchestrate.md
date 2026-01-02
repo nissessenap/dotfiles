@@ -103,7 +103,7 @@ State file created: .claude/orchestrator-state.json
 
 To start automated execution, run:
 ────────────────────────────────────────────────────────────
-/ralph-loop "/orchestrate_plan" --max-iterations {calculated} --completion-promise "ORCHESTRATION_STOPPED"
+/ralph-wiggum:ralph-loop "/orchestrate_plan" --max-iterations {calculated} --completion-promise "ORCHESTRATION_STOPPED"
 ────────────────────────────────────────────────────────────
 
 ⚠️  Review the above command before running.
