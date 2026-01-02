@@ -22,6 +22,57 @@ Choose agents based on what the phase requires:
 
 **Multi-agent approach encouraged**: For phases involving multiple domains (e.g., API + database), spawn multiple agents in parallel for better results for code-reviews.
 
+## Orchestrator Log
+
+All sub-agents MUST write to `.claude/orchestrator-log.md` to provide visibility into their reasoning and decisions. This file is NOT committed to git (add to .gitignore).
+
+### Log Format
+
+```markdown
+## Phase {N} ({YYYY-MM-DD HH:MM})
+
+### [{agent-type}] {Action}
+{content}
+
+---
+```
+
+### Logging Requirements by Agent
+
+| Agent | When to Log | Verbosity |
+|-------|-------------|-----------|
+| Implementation agents | Key decisions, deviations from plan, reused code | Brief |
+| `code-reviewe` | **ALWAYS** - even if no issues found | Verbose |
+| Fix agents | What was fixed and how | Brief |
+
+### Code Review Log Structure (Required)
+
+The code-review agent must ALWAYS append a log entry with this structure:
+
+```markdown
+### [code-reviewe] Review
+**Result:** {APPROVED | NEEDS_REVISION}
+
+**Files reviewed:**
+- {file1} ({lines changed})
+- {file2} ({lines changed})
+
+**Analysis:**
+{Detailed reasoning about what was examined and why}
+
+**Blockers found:**
+- {issue}: {why it's a blocker, what could go wrong}
+
+**High priority findings:**
+- {issue}: {reasoning}
+
+**Observations (not blocking):**
+- {things noticed but not flagged, edge cases considered}
+
+**What looked good:**
+- {positive observations about the implementation}
+```
+
 ## Workflow
 
 ### 1. Read State
@@ -93,6 +144,15 @@ Use Task tool with:
     5. Do not proceed to other phases
     6. When done, summarize what you implemented
 
+    Logging:
+    Append a brief log entry to `.claude/orchestrator-log.md`:
+    ```
+    ### [{your-agent-type}] Implementation
+    - {key decisions made}
+    - {any deviations from plan and why}
+    - {existing code/patterns you reused}
+    ```
+
     Return format:
     - SUCCESS: {summary of changes}
     - FAILURE: {what went wrong}
@@ -156,6 +216,44 @@ Use Task tool with:
     - Naming suggestions
     - Documentation gaps
 
+    IMPORTANT - Logging:
+    You MUST append a detailed log entry to `.claude/orchestrator-log.md`.
+    This log is critical for debugging and understanding your reasoning.
+
+    Log format (append to file):
+    ```
+    ### [code-reviewe] Review
+    **Result:** {APPROVED | NEEDS_REVISION}
+
+    **Files reviewed:**
+    - {file1} ({lines changed})
+    - {file2} ({lines changed})
+
+    **Analysis:**
+    {Explain what you examined, your reasoning process, and why you
+    focused on certain areas. Be thorough - this helps debug issues.}
+
+    **Blockers found:**
+    - {issue}: {why it's a blocker, what could go wrong if not fixed}
+
+    **High priority findings:**
+    - {issue}: {your reasoning for flagging this}
+
+    **Observations (not blocking):**
+    - {things you noticed but chose not to flag}
+    - {edge cases you considered}
+    - {patterns you recognized}
+
+    **What looked good:**
+    - {positive observations about the implementation}
+    - {good practices you noticed}
+    ```
+
+    Even if you find NO issues, you must still log:
+    - What files you reviewed
+    - What you checked for
+    - Why the code passed review
+
     Return format:
     VERDICT: [APPROVED | NEEDS_REVISION]
 
@@ -206,6 +304,14 @@ Use Task tool with:
     - The fix is out of scope for this phase
 
     Be honest - if the reviewer is right, fix it. If you have good reasons to disagree, explain them clearly.
+
+    Logging:
+    Append a log entry to `.claude/orchestrator-log.md`:
+    ```
+    ### [{your-agent-type}] Response to Review
+    - {issue}: {FIXED | DISAGREE: brief reason}
+    - {any interesting context about your decisions}
+    ```
 
     Return format:
     RESPONSE:
@@ -271,6 +377,14 @@ Use Task tool with:
     3. Do not refactor or improve other code
     4. Run failing verification commands after fixing
     5. Mark checkboxes [x] for now-passing verifications
+
+    Logging:
+    Append a log entry to `.claude/orchestrator-log.md`:
+    ```
+    ### [{your-agent-type}] Fix Attempt
+    - {issue fixed}: {how you fixed it}
+    - {any complications or decisions made}
+    ```
 
     Return format:
     - FIXED: {summary of fixes}
@@ -358,3 +472,5 @@ pending -> implementing -> verifying -> reviewing -> responding -> [commit] -> p
 - Multi-agent parallel execution is encouraged for cross-domain phases
 - Implementer can disagree with reviewer - requires clear technical justification
 - If `state.context` is set, include it in every sub-agent prompt - it guides how agents approach the work (e.g., "greenfield project, breaking changes OK")
+- All sub-agents log to `.claude/orchestrator-log.md` - review this file to understand agent reasoning
+- Code-review logs are always verbose; implementation/fix logs are brief

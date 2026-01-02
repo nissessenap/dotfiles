@@ -77,12 +77,28 @@ Field notes:
 - `last_review`: Stores review results for the responding step
 - `context`: User-provided guidance passed to all sub-agents (null if not provided)
 
-### 5. Calculate Max Iterations
+### 5. Initialize Orchestrator Log
+
+Create/reset `.claude/orchestrator-log.md`:
+
+```markdown
+# Orchestrator Log
+
+Plan: {plan_path}
+Started: {YYYY-MM-DD HH:MM}
+
+---
+
+```
+
+Also ensure `.claude/orchestrator-log.md` is in `.gitignore` (add if not present).
+
+### 6. Calculate Max Iterations
 
 - Formula: (total_phases - start_phase + 1) *(max_retries + 2)* 2
 - This accounts for: phases × (retries + impl + review) × safety margin
 
-### 6. Output Results
+### 7. Output Results
 
 Output this exact format:
 
@@ -100,6 +116,7 @@ Phases detected:
 ...
 
 State file created: .claude/orchestrator-state.json
+Log file created: .claude/orchestrator-log.md
 
 To start automated execution, run:
 ────────────────────────────────────────────────────────────
