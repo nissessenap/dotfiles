@@ -9,7 +9,7 @@ tags: [research, automation, sub-agents, ralph-loop, implement_plan, context-iso
 status: complete
 last_updated: 2026-01-02
 last_updated_by: Claude
-last_updated_note: "Added two-step workflow, dynamic test parsing, and unified exit strategy"
+last_updated_note: "Added checkbox-based verification to avoid duplicate test runs"
 ---
 
 # Research: Orchestrator + Sub-agents Pattern for Automated Plan Implementation
@@ -271,23 +271,33 @@ Spawn sub-agent with:
 
 Wait for sub-agent to return.
 
-#### 2.2 Verification (Dynamic from Plan)
-Parse the phase's "Automated Verification" section to extract commands:
+#### 2.2 Verification (Checkbox-Based)
 
-Example plan section:
-```markdown
-#### Automated Verification:
-- [ ] Unit tests pass: `make test`
-- [ ] Integration tests pass: `make test-integration`
-- [ ] Linting passes: `make lint`
-```
+The plan file is the source of truth. Sub-agents mark checkboxes as they complete verification steps.
 
-Orchestrator extracts and runs: `make test`, `make test-integration`, `make lint`
+**How it works:**
 
-If any command fails:
+1. Sub-agent implements the phase
+2. Sub-agent runs verification commands and marks checkboxes in the plan:
+   ```markdown
+   #### Automated Verification:
+   - [x] Unit tests pass: `make test`        ← sub-agent ran this
+   - [x] Linting passes: `make lint`         ← sub-agent ran this
+   - [ ] E2E tests pass: `make e2e`          ← sub-agent skipped (slow)
+   ```
+3. Orchestrator reads the plan after sub-agent returns
+4. Orchestrator only runs UNCHECKED items (e.g., `make e2e`)
+5. If unchecked items pass, orchestrator marks them checked
+
+**Benefits:**
+- No duplicate test runs (especially important for slow e2e tests)
+- Sub-agent has discretion to skip slow tests if not strictly needed
+- Plan file shows exactly what was verified and by whom
+
+**If any unchecked command fails:**
 
 - Increment retry_count
-- If retry_count <= max_retries: spawn fix sub-agent
+- If retry_count <= max_retries: spawn fix sub-agent with the failure details
 - If retry_count > max_retries: EXIT with blocked status
 
 #### 2.3 Code Review
@@ -392,7 +402,7 @@ After deciding, update the plan or state file and run:
 
 ### Implementation Sub-agent
 
-```
+```text
 You are implementing Phase {N} of a plan.
 
 Plan path: {plan_path}
@@ -402,18 +412,23 @@ Instructions:
 1. Read the plan document completely
 2. Find the section for Phase {N}
 3. Implement ONLY what's described in that phase
-4. Follow the success criteria listed
-5. Do not proceed to other phases
-6. When done, summarize what you implemented
+4. Run verification commands from the "Automated Verification" section
+5. IMPORTANT: Mark checkboxes in the plan file for tests you run successfully:
+   - Change `- [ ]` to `- [x]` for each passing verification
+   - Leave unchecked if you skip a test (e.g., slow e2e tests)
+6. Do not proceed to other phases
+7. When done, summarize what you implemented and verified
 
 Return format:
 - SUCCESS: {summary of changes}
+  - Verified: {list of checkboxes you marked}
+  - Skipped: {list of verifications left unchecked, if any}
 - FAILURE: {what went wrong}
 ```
 
 ### Code Review Sub-agent
 
-```
+```text
 You are reviewing code changes for Phase {N}.
 
 Review the diff: `git diff HEAD~1`
@@ -436,9 +451,10 @@ Return format:
 
 ### Fix Sub-agent
 
-```
+```text
 You are fixing issues found in Phase {N}.
 
+Plan path: {plan_path}
 Issues to fix:
 {list of issues from verification/review}
 
@@ -446,10 +462,13 @@ Instructions:
 1. Read the relevant files
 2. Fix ONLY the listed issues
 3. Do not refactor or improve other code
-4. Run tests after fixing
+4. Run the failing verification command(s) after fixing
+5. If tests pass, mark the checkbox in the plan file:
+   - Change `- [ ]` to `- [x]` for the now-passing verification
 
 Return format:
 - FIXED: {summary of fixes}
+  - Verified: {checkboxes you marked after successful re-run}
 - UNABLE: {what couldn't be fixed and why}
 ```
 
@@ -713,6 +732,14 @@ For your specific workflow (research → plan → implement with phases):
    - `/setup_orchestrate` prepares and shows the ralph-loop command
    - User verifies before running
    - Prevents accidental long-running automation
+
+4. **Avoiding duplicate test runs**: ✅ RESOLVED
+   - Plan file checkboxes are the source of truth
+   - Sub-agents mark `- [x]` for tests they run successfully
+   - Orchestrator only runs UNCHECKED verification items
+   - Prevents slow tests (e2e) from running twice
+   - Sub-agents have discretion to skip slow tests if not strictly needed
+   - Trust model: fully trust sub-agent checkmarks (they ran the tests with fresh context)
 
 ## Open Questions
 
