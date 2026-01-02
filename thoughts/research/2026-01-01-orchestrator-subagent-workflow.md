@@ -7,8 +7,9 @@ repository: dotfiles
 topic: "Orchestrator + Sub-agents Pattern for Automated Plan Implementation"
 tags: [research, automation, sub-agents, ralph-loop, implement_plan, context-isolation]
 status: complete
-last_updated: 2026-01-01
+last_updated: 2026-01-02
 last_updated_by: Claude
+last_updated_note: "Added two-step workflow, dynamic test parsing, and unified exit strategy"
 ---
 
 # Research: Orchestrator + Sub-agents Pattern for Automated Plan Implementation
@@ -25,11 +26,18 @@ How can the ralph-loop automation pattern be combined with sub-agents to impleme
 
 ## Summary
 
-The solution combines three mechanisms:
+The solution combines four mechanisms:
 
-1. **Ralph-loop** as the outer automation loop (keeps the orchestrator running)
-2. **A thin orchestrator** that tracks state and coordinates work
-3. **Sub-agents** for isolated implementation and review (fresh context per phase)
+1. **Setup skill** (`/setup_orchestrate`) - Generates the ralph-loop command for user verification
+2. **Ralph-loop** as the outer automation loop (keeps the orchestrator running)
+3. **A thin orchestrator** that tracks state and coordinates work
+4. **Sub-agents** for isolated implementation and review (fresh context per phase)
+
+Key design decisions:
+
+- **Two-step workflow**: User runs setup skill, verifies output, then starts ralph-loop
+- **Dynamic test parsing**: Verification commands extracted from plan's success criteria (not hardcoded)
+- **Unified exit strategy**: Single completion promise with context explaining why (success, blocked, needs input)
 
 This architecture achieves the user's goals:
 
@@ -37,7 +45,8 @@ This architecture achieves the user's goals:
 - Fresh context for each phase (no accumulated confusion)
 - Self-healing with retry limits (try to fix, escalate after N failures)
 - Commits between phases
-- Human notification on completion or unrecoverable errors
+- Human notification on completion, errors, or when feedback is needed
+- User can verify ralph-loop command before execution
 
 ## Detailed Findings
 
@@ -92,13 +101,33 @@ Stop hooks can:
 
 ## Architecture Documentation
 
+### Two-Step Workflow
+
+```
+STEP 1: Setup (user runs once)
+┌─────────────────────────────────────────────────────────────────┐
+│  /setup_orchestrate thoughts/plans/feature.md                   │
+│                                                                 │
+│  Outputs:                                                       │
+│  - Creates .claude/orchestrator-state.json                      │
+│  - Displays ralph-loop command for verification                 │
+│  - User reviews and decides to proceed                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (user copies and runs)
+STEP 2: Execution (automated)
+┌─────────────────────────────────────────────────────────────────┐
+│  /ralph-loop "/orchestrate_plan ..." --completion-promise ...   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ### The Orchestrator Pattern
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  RALPH-LOOP (outer automation)                                  │
 │  - Keeps orchestrator running                                   │
-│  - Stops on: "ALL_PHASES_COMPLETE" or max_iterations            │
+│  - Stops on: "ORCHESTRATION_STOPPED" or max_iterations          │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -108,11 +137,11 @@ Stop hooks can:
 │  2. Read state file (.claude/orchestrator-state.json)           │
 │  3. Determine current phase                                     │
 │  4. Spawn sub-agent for implementation                          │
-│  5. Run verification (tests/lint) directly                      │
+│  5. Parse & run verification commands FROM PLAN                 │
 │  6. Spawn sub-agent for code review                             │
 │  7. If issues: retry or escalate                                │
 │  8. If success: commit, update state, proceed                   │
-│  9. When done: output completion signal                         │
+│  9. When done/blocked/needs-input: output completion signal     │
 └─────────────────────────────────────────────────────────────────┘
             │                                    │
             ▼                                    ▼
@@ -148,31 +177,91 @@ File: `.claude/orchestrator-state.json`
 }
 ```
 
+### The Setup Skill
+
+File: `.claude/commands/setup_orchestrate.md`
+
+```markdown
+---
+description: Setup orchestration for a plan (generates ralph-loop command)
+model: opus
+argument-hint: "<path-to-plan.md> [--max-retries N] [--start-phase N]"
+---
+
+# Setup Orchestration
+
+Prepares orchestration for a plan and outputs the ralph-loop command for verification.
+
+## Arguments
+- `plan_path` (required): Path to the implementation plan
+- `--max-retries N`: Max fix attempts per phase (default: 3)
+- `--start-phase N`: Start from specific phase (default: 1, or resume from state)
+
+## Workflow
+
+1. Read and validate the plan document
+2. Count total phases
+3. Create/update state file: `.claude/orchestrator-state.json`
+4. Output the ralph-loop command for user to verify and run
+
+## Output Format
+
+```
+
+✅ Orchestration prepared for: {plan_path}
+
+Plan Summary:
+
+- Total phases: {N}
+- Starting from: Phase {start_phase}
+- Max retries per phase: {max_retries}
+
+Phases detected:
+
+1. {Phase 1 name}
+2. {Phase 2 name}
+...
+
+State file created: .claude/orchestrator-state.json
+
+To start automated execution, run:
+────────────────────────────────────────────────────────────
+/ralph-loop "/orchestrate_plan {plan_path}" \
+  --max-iterations {calculated} \
+  --completion-promise "ORCHESTRATION_STOPPED"
+────────────────────────────────────────────────────────────
+
+⚠️  Review the above command before running.
+    The loop will run until completion, error, or max iterations.
+
+```
+```
+
 ### The Orchestrator Command
 
 File: `.claude/commands/orchestrate_plan.md`
 
 ```markdown
 ---
-description: Automated plan implementation with sub-agents
+description: Execute plan phases with sub-agents (called by ralph-loop)
 model: opus
 ---
 
 # Orchestrate Plan Implementation
 
 ## Overview
-Automatically implement a plan using sub-agents for context isolation.
-Each phase runs in a fresh sub-agent context. Commits after each phase.
-Self-heals up to 3 times before escalating to human.
+Executes plan phases using sub-agents for context isolation.
+Parses verification commands from each phase's success criteria.
+Uses unified exit strategy - always exits with same promise, context explains why.
 
 ## Workflow
 
 ### 1. Initialize
 - Read the plan document (passed as argument)
-- Read/create state file: `.claude/orchestrator-state.json`
+- Read state file: `.claude/orchestrator-state.json`
 - Determine current phase (may be resuming)
 
-### 2. For Each Phase (until complete or blocked)
+### 2. For Each Phase (until complete or stopped)
 
 #### 2.1 Implementation
 Spawn sub-agent with:
@@ -182,73 +271,121 @@ Spawn sub-agent with:
 
 Wait for sub-agent to return.
 
-#### 2.2 Verification
-Run directly (not in sub-agent):
-- `make test` (or project-specific test command)
-- `make lint` (or project-specific lint command)
+#### 2.2 Verification (Dynamic from Plan)
+Parse the phase's "Automated Verification" section to extract commands:
 
-If tests/lint fail:
+Example plan section:
+```markdown
+#### Automated Verification:
+- [ ] Unit tests pass: `make test`
+- [ ] Integration tests pass: `make test-integration`
+- [ ] Linting passes: `make lint`
+```
+
+Orchestrator extracts and runs: `make test`, `make test-integration`, `make lint`
+
+If any command fails:
+
 - Increment retry_count
-- If retry_count <= 3: spawn fix sub-agent
-- If retry_count > 3: STOP and ask human
+- If retry_count <= max_retries: spawn fix sub-agent
+- If retry_count > max_retries: EXIT with blocked status
 
 #### 2.3 Code Review
+
 Spawn sub-agent with:
+
 - subagent_type: "code-reviewer" (your code-reviewe agent)
-- prompt: "Review the changes for Phase {N}. 
-          Run: git diff HEAD~1 to see changes."
+- prompt: "Review the changes for Phase {N}.
+          Run: git diff to see changes. Focus on blockers only."
 
 Parse review results:
-- If blockers found and retry_count <= 3: spawn fix sub-agent
-- If blockers found and retry_count > 3: STOP and ask human
+
+- If blockers found and retry_count <= max_retries: spawn fix sub-agent
+- If blockers found and retry_count > max_retries: EXIT with blocked status
 - If no blockers: proceed
 
 #### 2.4 Commit
+
 If all verification passed:
+
 - `git add -A && git commit -m "Phase {N}: {description}"`
 - Update state file: mark phase complete, reset retry_count
 
-#### 2.5 Proceed or Complete
-- If more phases: continue to next phase
-- If all phases done: output "ALL_PHASES_COMPLETE" and stop
+#### 2.5 Proceed or Exit
 
-### 3. Error Escalation
-When retry_count > 3:
+- If more phases: continue to next phase
+- If all phases done: EXIT with success status
+
+### 3. Unified Exit Strategy
+
+Always exit with the same completion promise. Context explains why:
+
+**Success:**
+
+```
+<promise>ORCHESTRATION_STOPPED</promise>
+
+✅ All phases complete!
+
+Completed phases:
+1. Phase 1: {description} (commit: abc123)
+2. Phase 2: {description} (commit: def456)
+...
+
+Ready for you to push and create PR.
 ```
 
-⛔ Phase {N} blocked after 3 attempts.
+**Blocked (retries exhausted):**
+
+```
+<promise>ORCHESTRATION_STOPPED</promise>
+
+⛔ Phase {N} blocked after {max_retries} attempts.
 
 Last error:
 {error details}
 
 Attempted fixes:
-
 1. {first attempt summary}
 2. {second attempt summary}
 3. {third attempt summary}
 
-Please review and either:
-
-- Fix manually and run: /orchestrate_plan {path} --resume
-- Provide guidance for next attempt
-
-```
+To resume after fixing: /setup_orchestrate {path} --start-phase {N}
 ```
 
-### Starting the Automated Loop
+**Needs Human Input:**
+
+```
+<promise>ORCHESTRATION_STOPPED</promise>
+
+🤚 Phase {N} needs your input.
+
+Question: {what the orchestrator is unsure about}
+
+Options:
+1. {option 1}
+2. {option 2}
+
+After deciding, update the plan or state file and run:
+/setup_orchestrate {path} --start-phase {N}
+```
+
+```
+
+### Usage Flow
 
 ```bash
-# Start the orchestrated implementation
+# Step 1: Setup (verify before running)
+/setup_orchestrate thoughts/plans/2026-01-01-feature.md
+
+# Step 2: Run the output command (after verification)
 /ralph-loop "/orchestrate_plan thoughts/plans/2026-01-01-feature.md" \
   --max-iterations 50 \
-  --completion-promise "ALL_PHASES_COMPLETE"
-```
+  --completion-promise "ORCHESTRATION_STOPPED"
 
-### Resume After Human Intervention
-
-```bash
-# After fixing an issue manually
-/orchestrate_plan thoughts/plans/2026-01-01-feature.md --resume
+# Step 3: After completion/error, review output and either:
+# - Push and create PR (if success)
+# - Fix issue and re-run setup (if blocked)
 ```
 
 ## Sub-agent Prompts
@@ -560,16 +697,35 @@ For your specific workflow (research → plan → implement with phases):
 
 **For parallel phases specifically**: Consider Git Worktrees (Option 3) for truly independent work.
 
+## Design Decisions
+
+1. **Test command detection**: ✅ RESOLVED
+   - Commands are parsed dynamically from each phase's "Automated Verification" section
+   - No hardcoded commands - each phase specifies exactly what to run
+   - Supports complex test matrices (unit, integration, e2e) per-phase
+
+2. **Exit strategy**: ✅ RESOLVED
+   - Single completion promise: `ORCHESTRATION_STOPPED`
+   - Context in output explains why (success, blocked, needs input)
+   - Allows loop to exit cleanly in all scenarios
+
+3. **Two-step workflow**: ✅ RESOLVED
+   - `/setup_orchestrate` prepares and shows the ralph-loop command
+   - User verifies before running
+   - Prevents accidental long-running automation
+
 ## Open Questions
 
-1. **Test command detection**: How to determine project-specific test/lint commands?
-   - Could read from CONTRIBUTING.md or Makefile
-   - Could be passed as arguments to orchestrate_plan
-
-2. **Phase dependency parsing**: How to detect parallelizable phases?
-   - Could require explicit markers in plan format
+1. **Phase dependency parsing**: How to detect parallelizable phases?
+   - Could require explicit markers in plan format (e.g., `depends_on: [Phase 1]`)
    - Could assume sequential by default
+   - For now: assume sequential, parallel is future enhancement
 
-3. **Commit granularity**: One commit per phase or squash on completion?
-   - Per-phase enables bisecting
-   - Squash keeps history clean
+2. **Commit granularity**: One commit per phase or squash on completion?
+   - Current design: per-phase commits (enables bisecting)
+   - Could add `--squash` flag to setup_orchestrate for squash preference
+
+3. **Manual verification steps**: How to handle phases with manual verification?
+   - Current plans have "Manual Verification" sections
+   - Could skip those and note them in exit output
+   - Could prompt for human confirmation (adds complexity)
