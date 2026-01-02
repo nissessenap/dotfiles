@@ -2,64 +2,57 @@
 
 ## Overview
 
-Implement an automated plan execution system that uses ralph-loop to keep an orchestrator running, which delegates implementation and review work to sub-agents with isolated contexts. This enables executing 7+ phase plans automatically while maintaining fresh context per phase.
+Implement two commands that work with the existing ralph-loop plugin to automate multi-phase plan execution using sub-agents for context isolation.
 
 Based on research: `thoughts/research/2026-01-01-orchestrator-subagent-workflow.md`
 
 ## Current State Analysis
 
-- **Existing commands**: `implement_plan.md` (manual, single-context), `code-reviewe.md` (review criteria)
-- **Existing agents**: `senior-software-engineer.md`, various specialized agents
-- **Missing**: No ralph-loop infrastructure, no orchestration commands, no stop hooks
-
-### Key Discoveries
-
-- Commands use YAML frontmatter with `description`, optional `model`, `argument-hint`
-- Agents use YAML frontmatter with `name`, `description`, `model`
-- No existing hook infrastructure in `claude/.claude/`
+- **Ralph-loop**: Existing plugin from awesomeclaude.ai that repeatedly feeds a prompt until completion promise is output
+- **Existing commands**: `implement_plan.md` (manual, single-context), `code-reviewe.md` (review agent)
+- **Existing agents**: `senior-software-engineer`, `code-reviewe`, various specialized agents
+- **Missing**: Orchestration commands that leverage ralph-loop with sub-agents
 
 ## Desired End State
 
 After implementation:
 
 1. User runs `/setup_orchestrate thoughts/plans/feature.md --context "greenfield, breaking changes OK"`
-2. System creates state file and displays ralph-loop command
-3. User runs the ralph-loop command
-4. Orchestrator automatically executes phases using sub-agents
-5. Each sub-agent receives the custom context in their prompt
-6. System commits after each phase, stops on completion/error/need-input
+2. Command creates state file and displays ralph-loop command to copy
+3. User runs: `/ralph-loop "/orchestrate_plan" --completion-promise "ORCHESTRATION_STOPPED" --max-iterations 50`
+4. Ralph-loop keeps re-invoking `/orchestrate_plan` until it outputs `ORCHESTRATION_STOPPED`
+5. Each iteration: orchestrator reads state, spawns sub-agent for current phase, updates state
+6. Sub-agents receive the custom context in their prompts
 
 ### Verification
 
-- Run `/setup_orchestrate` on a test plan and verify output format
-- Verify state file is created with correct structure including context
-- Verify sub-agents receive the custom context in prompts
+- `/setup_orchestrate` creates valid state file with context
+- `/orchestrate_plan` reads state, spawns sub-agents with context, outputs completion promise when done
+- Full workflow completes a multi-phase plan automatically
 
 ## What We're NOT Doing
 
+- Modifying ralph-loop (it's an existing plugin)
+- Creating custom stop hooks (ralph-loop handles this)
 - Parallel phase execution (future enhancement)
-- Preset context flags (`--greenfield`, `--breaking`) - only `--context`
-- MCP workflow server integration
-- Claude Agent SDK integration
-- Git worktree support
+- Preset context flags - only `--context`
 
 ## Implementation Approach
 
-Create two commands and a stop hook script:
+Create two commands:
 
-1. `/setup_orchestrate` - Prepares state and shows ralph-loop command
-2. `/orchestrate_plan` - The orchestrator that coordinates sub-agents
-3. Stop hook script - Keeps Claude running until completion promise
+1. **`/setup_orchestrate`** - Parses plan, creates state file, outputs ralph-loop command
+2. **`/orchestrate_plan`** - The orchestrator that ralph-loop repeatedly invokes
+
+---
 
 ## Phase 1: Setup Orchestrate Command
 
 ### Overview
 
-Create the setup command that validates a plan, creates state, and outputs the ralph-loop command for user verification.
+Create the setup command that validates a plan, creates state, and outputs the ralph-loop command for user to copy and run.
 
 ### Changes Required
-
-#### 1. Setup Orchestrate Command
 
 **File**: `claude/.claude/commands/setup_orchestrate.md`
 
@@ -71,27 +64,33 @@ argument-hint: "<path-to-plan.md> [--context \"custom context\"] [--max-retries 
 
 # Setup Orchestration
 
-Prepares orchestration for a plan and outputs the ralph-loop command for verification.
+Prepares orchestration for a plan and outputs the ralph-loop command.
 
 ## Arguments
+
+Parse from $ARGUMENTS:
 - `plan_path` (required): Path to the implementation plan
 - `--context "..."`: Custom context injected into all sub-agent prompts
 - `--max-retries N`: Max fix attempts per phase (default: 3)
-- `--start-phase N`: Start from specific phase (default: 1, or resume from state)
+- `--start-phase N`: Start from specific phase (default: 1)
 
 ## Workflow
 
-1. **Parse arguments** from $ARGUMENTS
-2. **Read and validate the plan document**
-   - Verify file exists
-   - Count phases (sections starting with `## Phase N:`)
-   - Extract phase names
-3. **Create/update state file**: `.claude/orchestrator-state.json`
-4. **Output the ralph-loop command** for user to verify and run
+### 1. Parse Arguments
 
-## State File Structure
+Extract plan_path, --context value, --max-retries, --start-phase from $ARGUMENTS.
 
-Create `.claude/orchestrator-state.json`:
+### 2. Validate Plan
+
+Read the plan file. Count phases by finding sections matching `## Phase \d+:` pattern.
+Extract phase names for display.
+
+If plan doesn't exist or has no phases, show error and stop.
+
+### 3. Create State File
+
+Write to `.claude/orchestrator-state.json`:
+
 ```json
 {
   "plan_path": "<plan_path>",
@@ -107,9 +106,9 @@ Create `.claude/orchestrator-state.json`:
 }
 ```
 
-## Output Format
+### 4. Output
 
-After creating state file, output EXACTLY this format:
+Display:
 
 ```
 ✅ Orchestration prepared for: {plan_path}
@@ -127,392 +126,243 @@ Phases detected:
 
 State file created: .claude/orchestrator-state.json
 
-To start automated execution, run:
+To start automated execution, copy and run:
 ────────────────────────────────────────────────────────────
-claude --resume "{session_id}" "/orchestrate_plan {plan_path}"
+/ralph-loop "/orchestrate_plan" --completion-promise "ORCHESTRATION_STOPPED" --max-iterations {phases * 5}
 ────────────────────────────────────────────────────────────
 
-The stop hook at claude/.claude/hooks/stop-orchestrator.sh will keep
-Claude running until all phases complete or an error requires human input.
-
-⚠️  Review the above command before running.
+⚠️  Review the command before running. The loop will continue until
+    all phases complete, an error requires human input, or max iterations.
 ```
-
-## Implementation Notes
-
-- Parse $ARGUMENTS to extract plan_path, --context, --max-retries, --start-phase
-- Use Read tool to read the plan file
-- Count phases by matching `## Phase \d+:` pattern
-- Write state file using Write tool
-- The stop hook handles the loop logic (not ralph-loop command)
-
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Command file exists at `claude/.claude/commands/setup_orchestrate.md`
-- [ ] Running `/setup_orchestrate` with a valid plan creates state file
-- [ ] State file contains all required fields including `custom_context`
-
-#### Manual Verification:
-- [ ] Output format is clear and readable
-- [ ] Phase detection correctly identifies all phases in plan
-- [ ] `--context` argument is correctly stored in state file
-
----
-
-## Phase 2: Stop Hook Script
-
-### Overview
-Create the stop hook that intercepts Claude exit and re-prompts with orchestrate_plan until completion.
-
-### Changes Required:
-
-#### 1. Stop Hook Script
-**File**: `claude/.claude/hooks/stop-orchestrator.sh`
-
-```bash
-#!/bin/bash
-# Stop hook for orchestrator - keeps Claude running until completion
-#
-# This hook:
-# 1. Checks if orchestration is active (state file exists with active status)
-# 2. If active, blocks exit and re-injects the orchestrate prompt
-# 3. If complete/error/needs-input, allows exit
-
-STATE_FILE=".claude/orchestrator-state.json"
-
-# Check if state file exists
-if [ ! -f "$STATE_FILE" ]; then
-    exit 0  # Allow exit - no orchestration active
-fi
-
-# Read state using jq
-PHASE_STATUS=$(jq -r '.phase_status' "$STATE_FILE" 2>/dev/null)
-
-# Check if orchestration should continue
-case "$PHASE_STATUS" in
-    "pending"|"implementing"|"reviewing"|"fixing")
-        # Orchestration in progress - block exit and re-prompt
-        PLAN_PATH=$(jq -r '.plan_path' "$STATE_FILE")
-        CURRENT_PHASE=$(jq -r '.current_phase' "$STATE_FILE")
-
-        # Output to stderr (shown to Claude)
-        echo "Orchestration in progress (Phase $CURRENT_PHASE). Continuing..." >&2
-        echo "" >&2
-        echo "Continue executing: /orchestrate_plan $PLAN_PATH" >&2
-
-        # Block exit
-        exit 2
-        ;;
-    "complete"|"blocked"|"needs_input")
-        # Orchestration finished - allow exit
-        exit 0
-        ;;
-    *)
-        # Unknown status - allow exit
-        exit 0
-        ;;
-esac
-```
-
-#### 2. Hook Configuration
-
-**File**: `claude/.claude/settings.json` (create if not exists)
-
-```json
-{
-  "hooks": {
-    "stop": [
-      {
-        "command": "bash claude/.claude/hooks/stop-orchestrator.sh",
-        "timeout": 5000
-      }
-    ]
-  }
-}
 ```
 
 ### Success Criteria
 
 #### Automated Verification
 
-- [ ] Hook script exists at `claude/.claude/hooks/stop-orchestrator.sh`
-- [ ] Hook script is executable: `chmod +x claude/.claude/hooks/stop-orchestrator.sh`
-- [ ] Settings file exists with hook configuration
+- [ ] Command file exists at `claude/.claude/commands/setup_orchestrate.md`
+- [ ] Running `/setup_orchestrate thoughts/plans/test.md` creates `.claude/orchestrator-state.json`
 
 #### Manual Verification
 
-- [ ] Hook correctly blocks exit when state is "implementing"
-- [ ] Hook allows exit when state is "complete"
-- [ ] Hook output is shown to Claude (via stderr)
+- [ ] Phase detection correctly identifies all phases
+- [ ] `--context` argument stored correctly in state file
+- [ ] Output displays correct ralph-loop command
 
 ---
 
-## Phase 3: Orchestrate Plan Command
+## Phase 2: Orchestrate Plan Command
 
 ### Overview
 
-Create the main orchestrator command that coordinates sub-agents for plan execution.
+Create the orchestrator command that ralph-loop repeatedly invokes. Each invocation processes one step (implement, verify, review, fix, or commit) then exits. Ralph-loop re-invokes until completion promise is output.
 
 ### Changes Required
-
-#### 1. Orchestrate Plan Command
 
 **File**: `claude/.claude/commands/orchestrate_plan.md`
 
 ```markdown
 ---
-description: Execute plan phases with sub-agents (works with stop hook for automation)
-argument-hint: "<path-to-plan.md>"
+description: Execute plan phases with sub-agents (called by ralph-loop)
 ---
 
 # Orchestrate Plan Implementation
 
-Executes plan phases using sub-agents for context isolation. The stop hook keeps this running automatically.
-
-## Overview
-
-This command is designed to be called repeatedly by the stop hook until all phases complete. Each invocation:
-1. Reads state to determine current phase
-2. Spawns sub-agent for implementation
-3. Runs verification (only unchecked items)
-4. Spawns sub-agent for code review
-5. Commits on success, updates state
-6. Exits (stop hook re-invokes if more phases remain)
+This command is invoked repeatedly by ralph-loop. Each invocation:
+1. Reads state to determine what to do
+2. Does ONE thing (spawn sub-agent, run verification, commit, etc.)
+3. Updates state
+4. Exits (ralph-loop re-invokes, or stops if completion promise output)
 
 ## Workflow
 
-### 1. Initialize
+### 1. Read State
 
-Read state file: `.claude/orchestrator-state.json`
-Read plan document from state's `plan_path`
+Read `.claude/orchestrator-state.json`. If missing:
 
-If no state file exists:
 ```
-
 ⛔ No orchestration state found.
 Run /setup_orchestrate <plan-path> first.
 
+ORCHESTRATION_STOPPED
 ```
-Exit normally (stop hook won't block).
 
-### 2. Check Current State
+Also read the plan document from `state.plan_path`.
 
-Based on `phase_status`:
-- `"pending"` → Start implementation of `current_phase`
-- `"implementing"` → Continue/retry implementation
-- `"reviewing"` → Continue code review
-- `"fixing"` → Spawn fix sub-agent
-- `"complete"` → Output success and exit
-- `"blocked"` → Output blocked status and exit
-- `"needs_input"` → Output question and exit
+### 2. Route Based on Status
 
-### 3. Implementation Sub-agent
+Check `state.phase_status` and route:
+
+| Status | Action |
+|--------|--------|
+| `pending` | Start implementation of current phase |
+| `implementing` | Check if implementation sub-agent is done, run verification |
+| `verifying` | Run unchecked verification commands |
+| `reviewing` | Spawn review sub-agent |
+| `fixing` | Spawn fix sub-agent |
+| `complete` | Output success message |
+| `blocked` | Output blocked message |
+| `needs_input` | Output question |
+
+### 3. Implementation (status: pending → implementing)
 
 Update state: `phase_status = "implementing"`
 
-Build sub-agent prompt including custom context:
+Spawn sub-agent with Task tool:
 
 ```
+subagent_type: "senior-software-engineer"
+prompt: |
+  You are implementing Phase {current_phase} of a plan.
 
-You are implementing Phase {N} of a plan.
+  Plan path: {plan_path}
+  Phase: {current_phase} of {total_phases}
 
-Plan path: {plan_path}
-Phase: {N} of {total}
-{IF custom_context}
-IMPORTANT CONTEXT: {custom_context}
-{ENDIF}
+  {IF custom_context}
+  **IMPORTANT CONTEXT**: {custom_context}
+  {ENDIF}
 
-Instructions:
+  Instructions:
+  1. Read the plan document at {plan_path}
+  2. Find Phase {current_phase} section
+  3. Implement ONLY what's described in that phase
+  4. Run verification commands from "Automated Verification" section
+  5. Mark checkboxes `- [x]` for tests you run successfully
+  6. Leave unchecked if you skip slow tests
+  7. Do NOT proceed to other phases
 
-1. Read the plan document completely
-2. Find the section for Phase {N}
-3. Implement ONLY what's described in that phase
-4. Run verification commands from the "Automated Verification" section
-5. Mark checkboxes in the plan file for tests you run successfully:
-   - Change `- [ ]` to `- [x]` for each passing verification
-   - Leave unchecked if you skip a test (e.g., slow e2e tests)
-6. Do not proceed to other phases
-7. When done, summarize what you implemented
-
-Return format:
-
-- SUCCESS: {summary of changes}
-  - Verified: {list of checkboxes you marked}
-  - Skipped: {list of verifications left unchecked, if any}
-- FAILURE: {what went wrong}
-
+  Return:
+  - SUCCESS: {summary} + which verifications you ran
+  - FAILURE: {what went wrong}
 ```
 
-Spawn using Task tool with `subagent_type: "senior-software-engineer"`
+After sub-agent returns, update state: `phase_status = "verifying"`
 
-### 4. Verification (Orchestrator Runs Unchecked Items)
+### 4. Verification (status: verifying)
 
-After sub-agent returns:
-1. Re-read the plan file to see which checkboxes are marked
-2. Find items in "Automated Verification" that are still `- [ ]`
-3. Run each unchecked command
-4. If passes, mark checkbox `- [x]` in plan file
-5. If any fails:
-   - Increment `retry_count`
-   - If `retry_count <= max_retries`: set `phase_status = "fixing"`, exit
-   - If `retry_count > max_retries`: set `phase_status = "blocked"`, exit
+Re-read the plan file. Find "Automated Verification" section for current phase.
+For each unchecked item `- [ ]`:
+1. Extract the command after the colon
+2. Run it
+3. If passes: mark `- [x]` in plan file
+4. If fails: record error, increment retry_count
 
-### 5. Code Review Sub-agent
+If all pass: update state `phase_status = "reviewing"`
+If any fail and `retry_count <= max_retries`: update state `phase_status = "fixing"`, store error in `last_error`
+If any fail and `retry_count > max_retries`: update state `phase_status = "blocked"`
 
-Update state: `phase_status = "reviewing"`
+### 5. Code Review (status: reviewing)
 
-Build sub-agent prompt:
-
-```
-
-You are reviewing code changes for Phase {N}.
-{IF custom_context}
-IMPORTANT CONTEXT: {custom_context}
-{ENDIF}
-
-Review the diff: `git diff HEAD~1` (or unstaged if not committed yet)
-
-Focus ONLY on blockers:
-
-- Security vulnerabilities
-- Critical logic bugs
-- Missing tests for new logic
-- Breaking API changes (unless context says breaking changes OK)
-
-Return format:
-
-- APPROVED: {brief summary}
-- BLOCKERS: {list of blocking issues}
+Spawn sub-agent:
 
 ```
+subagent_type: "code-reviewe"
+prompt: |
+  You are reviewing code changes for Phase {current_phase}.
 
-Spawn using Task tool with `subagent_type: "code-reviewe"`
+  {IF custom_context}
+  **IMPORTANT CONTEXT**: {custom_context}
+  {ENDIF}
 
-If blockers found:
-- Increment `retry_count`
-- If `retry_count <= max_retries`: set `phase_status = "fixing"`, exit
-- If `retry_count > max_retries`: set `phase_status = "blocked"`, exit
+  Run: git diff HEAD~1 (or git diff if not committed)
 
-### 6. Fix Sub-agent (if needed)
+  Focus ONLY on blockers:
+  - Security vulnerabilities
+  - Critical logic bugs
+  - Missing tests for new logic
+  - Breaking API changes (unless context allows breaking changes)
 
-When `phase_status = "fixing"`:
-
+  Return:
+  - APPROVED: {brief summary}
+  - BLOCKERS: {list of issues}
 ```
 
-You are fixing issues found in Phase {N}.
-{IF custom_context}
-IMPORTANT CONTEXT: {custom_context}
-{ENDIF}
+If APPROVED: proceed to commit
+If BLOCKERS and `retry_count <= max_retries`: `phase_status = "fixing"`, store blockers
+If BLOCKERS and `retry_count > max_retries`: `phase_status = "blocked"`
 
-Plan path: {plan_path}
-Issues to fix:
-{list of issues from verification/review}
+### 6. Fix (status: fixing)
 
-Instructions:
-
-1. Read the relevant files
-2. Fix ONLY the listed issues
-3. Run the failing verification command(s) after fixing
-4. If tests pass, mark the checkbox in the plan file
-
-Return format:
-
-- FIXED: {summary of fixes}
-- UNABLE: {what couldn't be fixed and why}
+Spawn sub-agent:
 
 ```
+subagent_type: "senior-software-engineer"
+prompt: |
+  You are fixing issues in Phase {current_phase}.
 
-After fix sub-agent returns:
-- If FIXED: go back to verification step
-- If UNABLE: set `phase_status = "blocked"`, exit
+  {IF custom_context}
+  **IMPORTANT CONTEXT**: {custom_context}
+  {ENDIF}
 
-### 7. Commit and Proceed
+  Issues to fix:
+  {last_error or blocker list}
 
-If all verification passed and review approved:
-1. Run: `git add -A && git commit -m "Phase {N}: {phase_description}"`
-2. Update state:
-   - Add phase to `completed_phases`
-   - Add commit info to `commits`
-   - Reset `retry_count = 0`
-   - Increment `current_phase`
-   - If `current_phase > total_phases`: set `phase_status = "complete"`
-   - Else: set `phase_status = "pending"`
-3. Exit (stop hook re-invokes for next phase)
+  Instructions:
+  1. Fix ONLY the listed issues
+  2. Run the failing verification(s)
+  3. Mark checkbox if now passing
 
-### 8. Exit Outputs
-
-**Success (all phases complete):**
+  Return:
+  - FIXED: {summary}
+  - UNABLE: {what couldn't be fixed}
 ```
 
+If FIXED: `phase_status = "verifying"` (re-run verification)
+If UNABLE: `phase_status = "blocked"`
+
+### 7. Commit and Advance
+
+After review approved:
+
+```bash
+git add -A
+git commit -m "Phase {current_phase}: {phase_description}"
+```
+
+Update state:
+- Add phase number to `completed_phases`
+- Add commit hash to `commits`
+- Reset `retry_count = 0`
+- `current_phase += 1`
+- If `current_phase > total_phases`: `phase_status = "complete"`
+- Else: `phase_status = "pending"`
+
+### 8. Terminal States
+
+**Complete:**
+```
 ✅ All phases complete!
 
-Completed phases:
+Completed:
+{list of phases with commit hashes}
 
-1. Phase 1: {description} (commit: abc123)
-2. Phase 2: {description} (commit: def456)
-...
+Ready to push and create PR.
 
-Ready for you to push and create PR.
-
-ORCHESTRATION_COMPLETE
-
-```
-Update state: `phase_status = "complete"`
-
-**Blocked (retries exhausted):**
+ORCHESTRATION_STOPPED
 ```
 
+**Blocked:**
+```
 ⛔ Phase {N} blocked after {max_retries} attempts.
 
-Last error:
-{error details}
+Error: {last_error}
 
-Attempted fixes:
+To resume after fixing:
+/setup_orchestrate {plan_path} --start-phase {N}
 
-1. {first attempt summary}
-2. {second attempt summary}
-...
-
-To resume after fixing manually:
-
-1. Fix the issue
-2. Run: /setup_orchestrate {path} --start-phase {N}
-
-ORCHESTRATION_BLOCKED
-
-```
-Update state: `phase_status = "blocked"`
-
-**Needs Human Input:**
+ORCHESTRATION_STOPPED
 ```
 
+**Needs Input:**
+```
 🤚 Phase {N} needs your input.
 
-Question: {what the orchestrator is unsure about}
+Question: {question}
 
-After deciding:
+After deciding, run:
+/setup_orchestrate {plan_path} --start-phase {N}
 
-1. Update the plan or answer the question
-2. Run: /setup_orchestrate {path} --start-phase {N}
-
-ORCHESTRATION_NEEDS_INPUT
-
-```
-Update state: `phase_status = "needs_input"`
-
-## State Transitions
-
-```
-
-pending → implementing → reviewing → (commit) → pending (next phase)
-                ↓              ↓
-             fixing ←──────────┘
-                ↓
-            blocked (if retries exhausted)
-
+ORCHESTRATION_STOPPED
 ```
 ```
 
@@ -521,119 +371,53 @@ pending → implementing → reviewing → (commit) → pending (next phase)
 #### Automated Verification
 
 - [ ] Command file exists at `claude/.claude/commands/orchestrate_plan.md`
-- [ ] Syntax is valid markdown with correct frontmatter
 
 #### Manual Verification
 
-- [ ] Command correctly reads state file
-- [ ] Sub-agents receive custom context in prompts
+- [ ] Command reads state file correctly
+- [ ] Sub-agents receive custom_context in prompts
 - [ ] State transitions work correctly
-- [ ] Commits are created after successful phases
-- [ ] Stop hook integration works (re-invokes on exit)
+- [ ] Outputs `ORCHESTRATION_STOPPED` on terminal states
+- [ ] Commits created after successful phases
 
 ---
 
-## Phase 4: Integration Testing
+## Phase 3: Integration Testing
 
 ### Overview
 
-Test the complete workflow end-to-end with a simple test plan.
+Test the complete workflow with a simple test plan.
 
-### Changes Required
+### Test Plan
 
-#### 1. Create Test Plan
-
-**File**: `thoughts/plans/2026-01-02-test-orchestrator.md` (temporary)
-
-```markdown
-# Test Orchestrator - Simple Two-Phase Plan
-
-## Overview
-A minimal plan to test the orchestrator workflow.
-
-## Phase 1: Create Test File
-
-### Changes Required:
-Create a file `test-orchestrator-output.txt` with content "Phase 1 complete"
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] File exists: `test -f test-orchestrator-output.txt`
-- [ ] Content correct: `grep -q "Phase 1" test-orchestrator-output.txt`
-
----
-
-## Phase 2: Update Test File
-
-### Changes Required:
-Append "Phase 2 complete" to `test-orchestrator-output.txt`
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Content includes Phase 2: `grep -q "Phase 2" test-orchestrator-output.txt`
-```
-
-### Test Steps
-
-1. Run `/setup_orchestrate thoughts/plans/2026-01-02-test-orchestrator.md --context "test context"`
-2. Verify state file created with `custom_context: "test context"`
-3. Run the orchestrate command manually once
-4. Verify sub-agent received context
-5. Clean up test files
+Create temporary test plan with 2 simple phases, run setup with `--context`, verify state, run orchestrate manually once, verify sub-agent received context.
 
 ### Success Criteria
 
-#### Automated Verification
-
-- [ ] State file created correctly
-- [ ] Test plan phases detected correctly
-
 #### Manual Verification
 
-- [ ] Full workflow executes correctly
-- [ ] Custom context appears in sub-agent prompts
-- [ ] State transitions happen correctly
-- [ ] Clean up test artifacts after testing
+- [ ] `/setup_orchestrate test-plan.md --context "test"` creates state with context
+- [ ] `/orchestrate_plan` spawns sub-agent with context in prompt
+- [ ] Ralph-loop integration works end-to-end
+- [ ] Clean up test artifacts
 
 ---
 
 ## Testing Strategy
 
-### Unit Tests
-
-- N/A (markdown command files don't have unit tests)
-
-### Integration Tests
-
-- Test `/setup_orchestrate` argument parsing
-- Test state file creation
-- Test `/orchestrate_plan` state reading
-- Test stop hook exit code behavior
-
 ### Manual Testing Steps
 
-1. Create a simple 2-phase test plan
-2. Run `/setup_orchestrate` with `--context`
-3. Verify state file contents
-4. Run `/orchestrate_plan` manually
-5. Verify sub-agent prompt includes context
-6. Verify phase completion and commit
-
-## Performance Considerations
-
-- Sub-agents have isolated contexts, preventing context bloat
-- State file is small JSON, fast to read/write
-- Stop hook has 5-second timeout to prevent hangs
-
-## Migration Notes
-
-N/A - New feature, no migration needed.
+1. Create simple 2-phase test plan
+2. Run `/setup_orchestrate test-plan.md --context "this is a test"`
+3. Verify `.claude/orchestrator-state.json` contains `custom_context`
+4. Run `/orchestrate_plan` once manually
+5. Verify sub-agent prompt includes the context
+6. Run full ralph-loop to test automation
 
 ## References
 
-- Original research: `thoughts/research/2026-01-01-orchestrator-subagent-workflow.md`
+- Research: `thoughts/research/2026-01-01-orchestrator-subagent-workflow.md`
+- Ralph-loop: https://awesomeclaude.ai/ralph-wiggum
 - Existing implement_plan: `claude/.claude/commands/implement_plan.md`
 - Senior engineer agent: `claude/.claude/agents/senior-software-engineer.md`
-- Code review command: `claude/.claude/commands/code-reviewe.md`
+- Code review: `claude/.claude/commands/code-reviewe.md`
