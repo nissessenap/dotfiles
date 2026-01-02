@@ -183,13 +183,13 @@ Expected format:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] File exists: `claude/.claude/commands/setup_orchestrate.md`
-- [ ] File has valid YAML frontmatter with description
-- [ ] Can be invoked: Test with a sample plan file
+- [x] File exists: `claude/.claude/commands/setup_orchestrate.md`
+- [x] File has valid YAML frontmatter with description
+- [x] Can be invoked: Test with a sample plan file
 
 #### Manual Verification:
-- [ ] Running `/setup_orchestrate` on a valid plan creates state file
-- [ ] Output shows correct phase count and ralph-loop command
+- [x] Running `/setup_orchestrate` on a valid plan creates state file
+- [x] Output shows correct phase count and ralph-loop command
 
 ---
 
