@@ -1,1 +1,9 @@
 theme = Aurora
+
+# Aurora's blue (#0321d7) is unreadable on the dark bg — this palette entry is
+# what `ls` dirs (di=01;34, bold blue) resolve to. Ghostty has no bold-is-bright,
+# so bold blue = palette 4. Bump it to Aurora's cyan-ish turquoise.
+palette = 4=#c74ded
+
+keybind = shift+enter=text:\n
+keybind = shift+space=text:\x20
