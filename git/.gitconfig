@@ -20,7 +20,7 @@
 [fetch]
 	prune = true
 	pruneTags = true
-	all = true
+	all = false
 [diff]
 	algorithm = histogram
 	colorMoved = plain
