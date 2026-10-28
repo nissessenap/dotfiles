@@ -104,6 +104,12 @@ gsettings set $custom_kbd:$kbd_path command $action
 
 gsettings set org.gnome.desktop.interface enable-hot-corners false
 
+### Enable middle mouse paste
+
+```bash
+gsettings set org.gnome.desktop.interface gtk-enable-primary-paste true
+```
+
 ## Brave browser
 
 ```bash
