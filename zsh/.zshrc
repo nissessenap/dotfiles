@@ -201,6 +201,9 @@ cheat () {
 	curl cht.sh/$1
 }
 
+# Stores all providers in 1 location, makes tf quicker
+export TF_PLUGIN_CACHE_DIR=$HOME/.terraform.d/plugin-cache
+
 # source tkn zsh completion
 #source ~/.local/completion/tekton.sh
 
