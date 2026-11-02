@@ -30,7 +30,7 @@ if (!ws) throw new Error('setup failed')
 const CTX = `Issue: ${A.issue}\n${ws.issue_summary}\nWork ONLY in the worktree ${ws.worktree} (branch ${ws.branch}).\n${RULES}`
 
 phase('Implement')
-const impl = await agent(`${CTX}\n\nImplement the issue. Run the repo's tests and linters locally until they pass. Commit (conventional commits). Don't push.`, {
+const impl = await agent(`${CTX}\n\nSolve the problem behind the issue. Implementation ideas in the issue are suggestions, not requirements: deviate when there is a better way, and note why in the commit message. Tests cover failure and edge cases (invalid input, errors, boundaries), not just the happy path. Run the repo's tests and linters locally until they pass. Commit (conventional commits). Don't push.`, {
   label: 'implement',
   schema: { type: 'object', required: ['summary', 'checks'], properties: {
     summary: { type: 'string' }, checks: { type: 'string', description: 'what you ran and the result' } } },
@@ -42,8 +42,8 @@ const FINDINGS = { type: 'object', required: ['findings'], properties: { finding
     id: { type: 'string' }, where: { type: 'string', description: 'file:line' }, problem: { type: 'string' }, suggestion: { type: 'string' } } } } } }
 const DIFF = `Review the diff of ${ws.branch} against its merge-base with the default branch, in ${ws.worktree}. Read-only: don't modify files.`
 const LENSES = [
-  { key: 'correctness', p: `Find correctness bugs, security issues and missing tests. Use the code-review skill if available.` },
-  { key: 'spec', p: `Does the change do what the issue asks, all of it and nothing extra? Does it follow the repo's documented standards (CLAUDE.md, CONTRIBUTING, lint config)? Use the mattpocock-skills:code-review skill if available.` },
+  { key: 'correctness', p: `Find correctness bugs, security issues and missing tests, especially missing negative/edge-case tests. Use the built-in code-review skill if available.` },
+  { key: 'spec', p: `Does the change solve the underlying problem the issue describes? The issue's proposed implementation is a suggestion; judge the outcome, not whether it was followed. Flag unrelated scope creep. Does it follow the repo's documented standards (CLAUDE.md, CONTRIBUTING, lint config)?` },
   { key: 'ponytail', p: `Find over-engineering: what can be deleted, replaced by stdlib, or simplified. Use the ponytail:ponytail-review skill if available.` },
 ]
 
