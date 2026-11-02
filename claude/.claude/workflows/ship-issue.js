@@ -30,10 +30,11 @@ if (!ws) throw new Error('setup failed')
 const CTX = `Issue: ${A.issue}\n${ws.issue_summary}\nWork ONLY in the worktree ${ws.worktree} (branch ${ws.branch}).\n${RULES}`
 
 phase('Implement')
-const impl = await agent(`${CTX}\n\nSolve the problem behind the issue. Implementation ideas in the issue are suggestions, not requirements: deviate when there is a better way, and note why in the commit message. Tests cover failure and edge cases (invalid input, errors, boundaries), not just the happy path. Run the repo's tests and linters locally until they pass. Commit (conventional commits). Don't push.`, {
+const impl = await agent(`${CTX}\n\nSolve the problem behind the issue. Implementation ideas in the issue are suggestions, not requirements: deviate when there is a better way, and note why in the commit message. Tests cover failure and edge cases (invalid input, errors, boundaries), not just the happy path. Think about maintainability: if the code around the change would be better refactored, weigh the value against the cost yourself. Do small, clearly worthwhile refactors here; for bigger ones, a follow-up issue beats a giant PR. Run the repo's tests and linters locally until they pass. Commit (conventional commits). Don't push.`, {
   label: 'implement',
-  schema: { type: 'object', required: ['summary', 'checks'], properties: {
-    summary: { type: 'string' }, checks: { type: 'string', description: 'what you ran and the result' } } },
+  schema: { type: 'object', required: ['summary', 'checks', 'code_health'], properties: {
+    summary: { type: 'string' }, checks: { type: 'string', description: 'what you ran and the result' },
+    code_health: { type: 'string', description: 'does this leave the code better or worse; refactors considered, each with value vs cost and whether done here, follow-up issue, or not worth it' } } },
 })
 if (!impl) throw new Error('implement failed')
 
@@ -82,7 +83,9 @@ if (todo.length) {
 let pr = null
 if (!A.dry) {
   phase('PR')
-  pr = await agent(`${CTX}\n\nPush the branch if not pushed. Open a DRAFT PR that closes the issue; write the body with the mattpocock-skills:pr skill if available. Then \`gh pr checks --watch\`. If CI fails, fix, commit, push, re-watch. Max 2 fix attempts, then stop and report what's failing.`, {
+  pr = await agent(`${CTX}\n\nPush the branch if not pushed. Open a DRAFT PR that closes the issue; write the title and body with the pr-description skill. Implementer's code-health notes for that section (update them if review fixes changed things):
+${impl.code_health}
+ Then \`gh pr checks --watch\`. If CI fails, fix, commit, push, re-watch. Max 2 fix attempts, then stop and report what's failing.`, {
     label: 'pr',
     schema: { type: 'object', required: ['url', 'ci'], properties: { url: { type: 'string' }, ci: { type: 'string', enum: ['green', 'red', 'pending'] }, notes: { type: 'string' } } },
   })
